@@ -28,10 +28,10 @@ Absolute file-level dissertion
 To disable all asserts in a file, simply set its source encoding to `dissert`.
 
 ```python
-> source = """# encoding: dissert
+> source = b"""# encoding: dissert
 assert False
 print("okay")"""
-> eval(source)
+> exec(source)
 okay
 ```
 
@@ -103,14 +103,14 @@ rather than imports.  Make a PR or open a discussion ticket if you think this
 is a good/bad idea.
 
 ```python
-> source = '''
+> source = b'''
 > # encoding: dissert
 > from dissert import Assert
 > assert(False, "wrong failure!")
 > Assert(False, "successfully failed!")
 > raise RuntimeError("bad success")
 > '''
-> eval(source)
+> exec(source)
 ...
 AssertionError: successfully failed!
 ```

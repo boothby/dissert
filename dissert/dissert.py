@@ -125,7 +125,7 @@ def dissert_select(strip):
     """
     global _dissert
     _dissert = strip
-    
+
 class dissert_selector:
     def __init__(self, strip=True):
         """

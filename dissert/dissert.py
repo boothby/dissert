@@ -21,146 +21,143 @@
 from ast import parse as _parse, Assert as _Assert, Pass as _Pass
 from astunparse import unparse as _unparse
 from contextlib import contextmanager as _contextmanager
-import codecs as _codecs, re as _re
-
-"""
-A release-mode assertion disabler.  Lets you write all the inline assertions
-you want for development and testing, but puts the fast version into the hands
-of your users.
-
-File "fail.py":
-
-    # encoding: dissert
-    def foo(x):
-        print("oh no, I got called")
-        assert x is not x
-
-    if foo is not None:
-        assert foo() is not None
-
-    print("okay")
-
-Include it without asserts (delete your `_pycache_`!):
-
-    > from dissert import dissert
-    > with dissert(True):
-    >     import fail.py
-    okay
-
-Include it with asserts (delete your `_pycache_`!):
-
-    > from dissert import dissert
-    > with dissert(False):
-    >     import fail.py
-    oh no, I got called
-    AssertionError: ...
-
-Slap it on your module by renaming your `__init__.py` to `_init_.py` and
-replacing it with a shim:
-
-    from dissert import dissert
-    from mymodule.__package_info__ import __release__
-    with dissert(__release__):
-        from mymodule._init_ import *
-
-Of course, it will only remove asserts from marked files, but we can call
-that a feature since it gives some control over which files are disserted. To
-prove that it's a feature, we'll throw in an Assert function that works even
-in affected files (but also goes away with `-O`)
-
-    > source = '''
-    > # encoding: dissert
-    > from dissert import Assert
-    > assert(False, "wrong failure!")
-    > Assert(False, "successfully failed!")
-    > '''
-    > with dissert(True)
-    >     eval(source)
-    ...
-    AssertionError: successfully failed!
-"""
+from codecs import CodecInfo as _Codec, register as _register_codec
+import re as _re
 
 def Assert(check, msg):
-    """def Assert(check, msg): assert check, msg"""
+    """
+    This is a bypass function to provide assertions in otherwise disserted 
+    code.  Note that it utilizes `assert`, so these assertions are still
+    disabled by -O.  See ASSERT() for an unstoppable version.
+
+    This function is not as efficient as a traditional `assert`, since it's
+    wrapped in a function call.
+    """
     assert check, msg
 
+def ASSERT(check, msg):
+    """
+    This is a bypass function to provide assertions in otherwise disserted 
+    code.  This does not use `assert`, so these assertions remain active even
+    under -O.  See Assert() for a version that respects -O.
+
+    This function is inefficient compared to a traditional `assert`, due to
+    function overhead and emulation with `if ...: raise ...`.
+    """
+    if not check:
+        raise AssertionError(str(msg))
+
 _pass = _Pass()
-def _remove_asserts(tree):
+def _ast_dissert(tree):
     """
-    replaces all Assert nodes in the input ast with Pass nodes, inplace.
+    Replaces all Assert nodes in the input ast with Pass nodes, inplace.
     """
-    stack = (tree.body, [], 0), ()
+    stack = (tree.body, len(tree.body)-1), ()
     while stack:
-        (incoming, outgoing, i), stack = stack
-        if i == len(incoming):
-            incoming[:] = outgoing
-            continue
-        else:
-            stack = (incoming, outgoing, i+1), stack
-        node = incoming[i]
+        (body, i), stack = stack
+        if i > 0:
+            stack = (body, i-1), stack
+        node = body[i]
         if isinstance(node, _Assert):
-            outgoing.append(_pass)
-        else:
-            outgoing.append(node)
-            if hasattr(node, 'body'):
-                stack = (node.body, [], 0), stack
+            body[i] = _pass
+        elif hasattr(node, 'body'):
+            stack = (node.body, len(node.body) - 1), stack
+
+_encoding_tag = _re.compile(b"^[ \t\f]*#.*?coding[:=][ \t]*[-_.a-zA-Z0-9]+")
+def _decode_dissert(binary):
+    """
+    Replaces all assert statements in a body of python code with `pass`.
+    """
+    #strip out the character encoding to prevent loops
+    lines = binary.tobytes().split(b'\n')
+    if _encoding_tag.match(lines[0]) is not None:
+        lines = lines[1:]
+    elif len(lines) > 1 and _encoding_tag.match(lines[1]) is not None:
+        lines = lines[:1] + lines[2:]
+    binary = b'\n'.join(lines)
+    tree = _parse(binary)
+    _ast_dissert(tree)
+    return _unparse(tree)
+
 
 _dissert = False    
-_encoding_tag = _re.compile(b"^[ \t\f]*#.*?coding[:=][ \t]*[-_.a-zA-Z0-9]+")
-def _decode(binary):
+def _decode_select(binary):
     """
-    replaces all assert statements in a body of python code, unless the global
-    value _dissert is False.
+    Replaces all assert statements in a body of python code with `pass`,
+    unless the global value _dissert is False.
     """
     if _dissert:
-        #strip out the character encoding to prevent loops
-        lines = binary.tobytes().split(b'\n')
-        if _encoding_tag.match(lines[0]) is not None:
-            lines = lines[1:]
-        elif len(lines) > 1 and _encoding_tag.match(lines[1]) is not None:
-            lines = lines[:1] + lines[2:]
-        binary = b'\n'.join(lines)
-        tree = _parse(binary)
-        _remove_asserts(tree)
-        text = _unparse(tree)
+        text = _decode_remove_asserts(binary)
     else:
         text = binary.tobytes().decode('utf-8')
     return text, len(text)
 
-def _encode(text):
+def _nope_encoder(text):
+    """
+    Cowardly raises a NotImplementedError rather than adding asserts or
+    (more sensibly) doing nothing with the text and re-encoding it to utf-8.
+    The cowardly behavior is preferable in the case that somebody expects this
+    function to restore assertions to their previously-disserted code.  
+    """
     raise NotImplementedError("Uhhhhhhh... I'm not putting asserts into your"
                               " code for you.")
 
-_codecs.register(lambda name: _codecs.CodecInfo(_encode, _decode, name='dissert'))
+#register our encodings
+_dissert_select = _Codec(_nope_encoder, _decode_select, name='dissert-select')
+_register_codec(lambda name: _dissert_select)
 
-def set_dissert(strip=True):
+_dissert = _Codec(_nope_encoder, _decode_dissert, name='dissert')
+_register_codec(lambda name: _dissert)
+
+class dissert_select:
     """
-    Turn assertions off (or on, if strip=False) for source files marked with
-    the dissert character encoding.  Note that this can fail if a given module
-    has already been imported since the last change to that module.  Delete 
-    the __pycache__ for affected modules.
+    Turn assertions off (or on, if strip=False) for source files marked
+    with the dissert-select character encoding.
+
+    Note that this fails silently if a given module has already been
+    imported since the last change to that module.  Delete the __pycache__
+    for affected modules.
+
+    Also note that this selectivity is controlled through a global 
+    variable, and calls made by nested imports may change the value of 
+    that global variable.  Use the `dissert_selector` context manager if
+    this is important to you.
     """
     global _dissert
     _dissert = strip
+    
+class dissert_selector:
+    def __init__(self, strip=True):
+        """
+        A context manager for selectively disabling assert on includes marked
+        with the dissert-select character encoding within the managed context.
 
-@_contextmanager
-def dissert(strip=False):
-    """
-    A context manager for selectively disabling inserts on includes within the
-    managed context.  Note that this can fail if a given module has already
-    been imported since the last change to that module.  Delete the __pycache__ 
-    for affected modules.  
+        Note that this fails silently if a given module has already been
+        imported since the last change to that module.  Delete the __pycache__
+        for affected modules.
 
-    Also note that this selectivity is controlled through a global variable,
-    and calls made by nested imports may change the value of that global 
-    variable.  This context restores the global state to what it was upon
-    creation of the context.
-    """
-    global _dissert
-    prev = _dissert
-    _dissert = strip
-    try:
-        yield
-    finally:
-        _dissert = prev
+        Also note that this selectivity is controlled through a global 
+        variable, and calls made by nested imports may change the value of 
+        that global variable.  This context restores the global state to what
+        it was upon entry to the context.  This is naturally unstable
+        according to import order.
+        """
+        self._strip = strip
+
+    def __enter__(self):
+        """
+        Enters the context by storing the old value of the global _dissert and
+        setting _dissert to this context's value.
+        """
+        global _dissert
+        self._prev = _dissert
+        _dissert = self._strip
+        return self
+
+    def __exit__(self)
+        """
+        Exits the context by restoring the old value of the global _dissert.
+        """
+        global _dissert
+        _dissert = self._prev
 

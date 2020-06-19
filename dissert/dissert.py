@@ -22,7 +22,7 @@ from ast import parse as _parse, Assert as _Assert, Pass as _Pass
 from astunparse import unparse as _unparse
 from contextlib import contextmanager as _contextmanager
 from codecs import CodecInfo as _Codec, register as _register_codec
-import re as _re
+import re as _re, traceback as _tb
 
 def Assert(check, msg):
     """
@@ -87,7 +87,7 @@ def _decode_select(binary):
     unless the global value _dissert is False.
     """
     if _dissert:
-        text = _decode_remove_asserts(binary)
+        text = _decode_dissert(binary)
     else:
         text = binary.tobytes().decode('utf-8')
     return text, len(text)
@@ -109,7 +109,7 @@ _register_codec(lambda name: _dissert_select)
 _dissert = _Codec(_nope_encoder, _decode_dissert, name='dissert')
 _register_codec(lambda name: _dissert)
 
-class dissert_select:
+def dissert_select(strip):
     """
     Turn assertions off (or on, if strip=False) for source files marked
     with the dissert-select character encoding.
@@ -154,10 +154,13 @@ class dissert_selector:
         _dissert = self._strip
         return self
 
-    def __exit__(self)
+    def __exit__(self, exc_type, exc_value, tb):
         """
         Exits the context by restoring the old value of the global _dissert.
         """
         global _dissert
         _dissert = self._prev
-
+        if exc_type is not None:
+            traceback.print_exception(exc_type, exc_value, tb)
+            return False
+        return True

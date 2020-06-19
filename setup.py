@@ -7,4 +7,5 @@ setup(name='dissert',
       author='Kelly Boothby',
       license='MIT',
       packages=['dissert'],
+      install_requires=['unparse'],
       zip_safe=True)

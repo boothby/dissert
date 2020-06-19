@@ -22,7 +22,7 @@ from ast import parse as _parse, Assert as _Assert, Pass as _Pass
 from astunparse import unparse as _unparse
 from contextlib import contextmanager as _contextmanager
 from codecs import CodecInfo as _Codec, register as _register_codec
-import re as _re, traceback as _tb
+import re as _re
 
 def Assert(check, msg):
     """
@@ -160,7 +160,3 @@ class dissert_selector:
         """
         global _dissert
         _dissert = self._prev
-        if exc_type is not None:
-            traceback.print_exception(exc_type, exc_value, tb)
-            return False
-        return True

@@ -7,7 +7,8 @@ class test_dissert(unittest.TestCase):
 
     def test_selector_true(self):
         with dissert_selector(True):
-            from . import fail_select0
+            with self.assertRaises(RuntimeError):
+                from . import fail_select0
 
     def test_selector_false(self):
         with dissert_selector(False):
@@ -33,3 +34,6 @@ class test_dissert(unittest.TestCase):
         with self.assertRaises(AssertionError):
             exec(b'# coding: dissert-select\nassert False, "hello world"')
 
+    def test_encode(self):
+        with self.assertRaises(NotImplementedError):
+            "".encode("dissert")
